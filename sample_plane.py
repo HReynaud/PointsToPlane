@@ -5,6 +5,7 @@ import time
 import subprocess
 import SimpleITK as sitk
 from PIL import Image
+from scipy import ndimage, misc
 
 def saveJPG(arr, path):
     arr = arr.astype(np.uint8)
@@ -80,6 +81,8 @@ def get_plane(arr, coefs, oob_black=True):
     sx, sy, sz = arr.shape
     main_ax = np.argmax([abs(a), abs(b), abs(c)])
 
+    # print("main_ax =", main_ax+1)
+
     if main_ax == 0:
         Y, Z = np.meshgrid(np.arange(sy), np.arange(sz), indexing='ij')
         X = (d - b * Y - c * Z) / a
@@ -134,40 +137,110 @@ def save_mpl(dotA, dotB, dotC, X, Y, Z):
     plt.tight_layout()
     plt.savefig('/vol/biomedic3/hjr119/XCAT/samples/planeMPL.jpg')
 
-ct_itk = sitk.ReadImage("/vol/biomedic3/hjr119/XCAT/generation/samp0_CT_1.nii.gz")
-ct_arr = sitk.GetArrayFromImage(ct_itk)
-# ct_arr = np.moveaxis(ct_arr, 0, -1)
-sx, sy, sz = ct_arr.shape
-ct_arr = ct_arr/ct_arr.max()*255
-print(ct_arr.min(), ct_arr.max(), ct_arr.shape)
+def sample_dot(limits):
+    assert len(limits) == 3
+    coords = []
+    for ax in limits:
+        if type(ax) == type(tuple()):
+            v = (np.random.rand()*(max(ax)-min(ax))) + min(ax)
+            coords.append(np.round(v, 3))
+        else:
+            coords.append(ax)
+    
+    return coords
+
+def sample_planes(ct_arr, ranges, rep = 10):
+    for i in range(rep):
+        dotA        = Point(*sample_dot(ranges[0]), ct_arr)
+        dotB        = Point(*sample_dot(ranges[1]), ct_arr)
+        dotC        = Point(*sample_dot(ranges[2]), ct_arr)
+        coefs       = get_plane_coefs(dotA, dotB, dotC)
+        plane, _    = get_plane(ct_arr, coefs)
+        angle       = np.round(np.random.rand()*10+40)
+        plane       = ndimage.rotate(plane, angle, reshape=False, order=0)
+        name        = "samp"+ ("0000"+str(i))[-4:]  + ".jpg"
+        saveJPG(plane, os.path.join("/vol/biomedic3/hjr119/XCAT/samples/planes",name))
+
+def intensity_scaling(ndarr, pmin=None, pmax=None, nmin=None, nmax=None):
+    pmin = pmin if pmin != None else ndarr.min()
+    pmax = pmax if pmax != None else ndarr.max()
+    nmin = nmin if nmin != None else pmin
+    nmax = nmax if nmax != None else pmax
+    
+    ndarr[ndarr<pmin] = pmin
+    ndarr[ndarr>pmax] = pmax
+    ndarr = (ndarr-pmin)/(pmax-pmin)
+    ndarr = ndarr*(nmax-nmin)+nmin
+    return ndarr    
+
+if __name__ == "__main__":
+
+    ct_itk = sitk.ReadImage("/vol/biomedic3/hjr119/XCAT/generation/default_512_CT_1.nii.gz")
+    ct_arr = sitk.GetArrayFromImage(ct_itk)
+    # ct_arr = np.moveaxis(ct_arr, 0, -1)
+    sx, sy, sz = ct_arr.shape
+    ct_arr = ct_arr/ct_arr.max()*255
+    ct_arr = intensity_scaling(ct_arr, pmin=150, pmax=200, nmin=0, nmax=255)
+    print(ct_arr.min(), ct_arr.max(), ct_arr.shape)
 
 
-dotA = Point(0, 0, .5, ct_arr)
-dotB = Point(0, .5, 0, ct_arr)
-dotC = Point(.5, 0, 0, ct_arr)
+    # dotA = Point(0, 0, .5, ct_arr)
+    # dotB = Point(0, .5, 0, ct_arr)
+    # dotC = Point(.5, 0, 0, ct_arr)
 
-if True:
-    r = 5
-    ct_arr = draw_sphere(ct_arr, dotA, r=r)
-    ct_arr = draw_sphere(ct_arr, dotB, r=r)
-    ct_arr = draw_sphere(ct_arr, dotC, r=r)
+    # axial, coronal, sagittal
+    rangeA = ((0.85, 1) , 0, (0.7,0.92))    #DONE
+    rangeB = ((0.3,0.43), 1, 0) 
+    rangeC = ((0.3,0.43), 1, 1)   
 
-coefs = get_plane_coefs(dotA, dotB, dotC)
-print(coefs)
+    # rangeA = ((0, 1), 0, (0, 1))
+    # rangeB = ((0, 1), 1, (0, 1)) 
+    # rangeC = ((0, 1), 1, (0, 1))   
 
-plane, (X, Y, Z) = get_plane(ct_arr, coefs)
-print(coefs, plane.shape)
-ct_arr[X, Y, Z] = 255
+    previ = time.time()
 
-# name = "plane_"+str(hA)[:3]+"_"+str(hB)[:3]+"_"+str(hC)[:3]+".jpg"
-name = "tmp.jpg"
-saveJPG(plane, os.path.join("/vol/biomedic3/hjr119/XCAT/samples",name))
+    sample_planes(ct_arr, (rangeA, rangeB, rangeC), rep=200)
 
-saveJPG(ct_arr[sx//2, :, :], "/vol/biomedic3/hjr119/XCAT/samples/ax1.jpg")
-saveJPG(ct_arr[:, sy//2, :], "/vol/biomedic3/hjr119/XCAT/samples/ax2.jpg")
-saveJPG(ct_arr[:, :, sz//2], "/vol/biomedic3/hjr119/XCAT/samples/ax3.jpg")
+    after = time.time()
 
-# save_mpl(dotA, dotB, dotC, X, Y, Z)
+    print("Generated in", after-previ, "sec.")
 
-print("done")
+    exit()
+
+    dotA = Point(*sample_dot(rangeA), ct_arr)
+    dotB = Point(*sample_dot(rangeB), ct_arr)
+    dotC = Point(*sample_dot(rangeC), ct_arr)
+
+    print(dotA, dotB, dotC, sep='\n')
+
+    if False:
+        r = 5
+        ct_arr = draw_sphere(ct_arr, dotA, r=r)
+        ct_arr = draw_sphere(ct_arr, dotB, r=r)
+        ct_arr = draw_sphere(ct_arr, dotC, r=r)
+
+    coefs = get_plane_coefs(dotA, dotB, dotC)
+    print(coefs)
+
+    plane, (X, Y, Z) = get_plane(ct_arr, coefs)
+    # print(coefs, plane.shape)
+    print(plane.min(), plane.max())
+
+    angle = np.round(np.random.rand()*10+40)
+    print("Angle", angle)
+    plane = ndimage.rotate(plane, angle, reshape=False)
+
+    ct_arr[X, Y, Z] = 255 # Draws white lines on the images
+
+    # name = "plane_"+str(hA)[:3]+"_"+str(hB)[:3]+"_"+str(hC)[:3]+".jpg"
+    name = "tmp.jpg"
+    saveJPG(plane, os.path.join("/vol/biomedic3/hjr119/XCAT/samples",name))
+
+    saveJPG(ct_arr[sx//2, :, :], "/vol/biomedic3/hjr119/XCAT/samples/ax1.jpg")
+    saveJPG(ct_arr[:, sy//2, :], "/vol/biomedic3/hjr119/XCAT/samples/ax2.jpg")
+    saveJPG(ct_arr[:, :, sz//2], "/vol/biomedic3/hjr119/XCAT/samples/ax3.jpg")
+
+    # save_mpl(dotA, dotB, dotC, X, Y, Z)
+
+    print("done")
 
